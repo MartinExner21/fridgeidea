@@ -44,6 +44,7 @@ type ImageCandidate = {
 const SKOLEGPT_API_URL = process.env.SKOLEGPT_API_URL;
 const SKOLEGPT_API_KEY = process.env.SKOLEGPT_API_KEY;
 const SKOLEGPT_MODEL = process.env.SKOLEGPT_MODEL || "google/gemma-4-26B-A4B-it";
+const PEXELS_API_KEY = process.env.PEXELS_API_KEY;
 const GOOGLE_SEARCH_API_KEY = process.env.GOOGLE_SEARCH_API_KEY;
 const GOOGLE_CSE_ID = process.env.GOOGLE_CSE_ID;
 const USER_AGENT =
@@ -175,6 +176,38 @@ function makeRecipeImageQuery(recipe: Recipe) {
   const title = recipe.title || "madret";
   const ingredients = (recipe.ingredients || recipe.uses || []).slice(0, 6);
   return `${title} ${ingredients.join(" ")} opskrift madfoto`;
+}
+
+async function searchPexelsImages(recipe: Recipe) {
+  if (!PEXELS_API_KEY) return [];
+
+  const query = makeRecipeImageQuery(recipe);
+  try {
+    const response = await fetch(`https://api.pexels.com/v1/search?per_page=5&orientation=landscape&query=${encodeURIComponent(query)}`, {
+      headers: { Authorization: PEXELS_API_KEY },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!response.ok) return [];
+
+    const data = (await response.json()) as {
+      photos?: Array<{
+        alt?: string;
+        photographer?: string;
+        src?: { large?: string; landscape?: string; medium?: string; original?: string };
+      }>;
+    };
+    const terms = query.toLowerCase().split(/[^a-zæøå0-9]+/i).filter(Boolean);
+    return (data.photos || [])
+      .map((photo, index) => ({
+        url: photo.src?.landscape || photo.src?.large || photo.src?.medium || photo.src?.original || "",
+        source: photo.photographer ? `Pexels / ${photo.photographer}` : "Pexels",
+        score: scoreImageUrl(`${photo.alt || ""} ${photo.src?.large || ""}`, terms) + (5 - index),
+      }))
+      .filter((candidate) => /^https?:\/\//i.test(candidate.url))
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
 }
 
 function translateIngredientForMealDb(value: string) {
@@ -352,6 +385,9 @@ async function searchWikimediaImages(recipe: Recipe) {
 }
 
 async function searchGoogleImages(recipe: Recipe) {
+  const pexelsResults = await searchPexelsImages(recipe);
+  if (pexelsResults.length) return pexelsResults;
+
   const customResults = await searchGoogleCustomImages(recipe);
   if (customResults.length) return customResults;
 

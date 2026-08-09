@@ -28,9 +28,12 @@ SKOLEGPT_API_KEY=
 SKOLEGPT_MODEL=google/gemma-4-26B-A4B-it
 SKOLEGPT_VISION_MODEL=google/gemma-4-26B-A4B-it
 SKOLEGPT_STT_API_URL=
+PEXELS_API_KEY=
 GOOGLE_SEARCH_API_KEY=
 GOOGLE_CSE_ID=
 ```
+
+`PEXELS_API_KEY` bruges som førstevalg til opskriftsbilleder. Pexels er gratis og giver stabile madfotos.
 
 `GOOGLE_SEARCH_API_KEY` og `GOOGLE_CSE_ID` bruges til opskriftsbilleder via Google Custom Search med `searchType=image`. Hvis de mangler, forsøger appen først almindelig Google-billedsøgning og bruger derefter en madfoto-fallback.
 
