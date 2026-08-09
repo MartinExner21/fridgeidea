@@ -147,6 +147,7 @@ export default function Home() {
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const cameraSectionRef = useRef<HTMLElement | null>(null);
+  const recipesSectionRef = useRef<HTMLElement | null>(null);
 
   const canCreate = useMemo(
     () => items.length > 0 || wishes.trim().length > 0 || inspirationLinks.length > 0 || inspirationText.trim().length > 0,
@@ -178,6 +179,16 @@ export default function Home() {
       }
       setStatus("Gemt i favoritter");
       return [recipe, ...current].slice(0, 50);
+    });
+  }
+
+  function toggleFavoritesView() {
+    setShowFavorites((value) => {
+      const next = !value;
+      window.setTimeout(() => {
+        recipesSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+      }, 0);
+      return next;
     });
   }
 
@@ -430,14 +441,15 @@ export default function Home() {
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <button
-              className={`relative flex h-12 w-12 items-center justify-center rounded-md border shadow-sm ${
+              className={`relative flex h-12 items-center justify-center gap-2 rounded-md border px-3 shadow-sm ${
                 showFavorites ? "border-[#255143] bg-[#255143] text-white" : "border-[#d7ded2] bg-white text-[#255143]"
               }`}
-              onClick={() => setShowFavorites((value) => !value)}
+              onClick={toggleFavoritesView}
               title="Se favoritter"
               type="button"
             >
               <Star fill={showFavorites ? "currentColor" : "none"} size={22} aria-hidden="true" />
+              <span className="text-sm font-black">Favoritter</span>
               {favorites.length ? (
                 <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[#cf5d4e] px-1 text-[11px] font-black text-white">
                   {favorites.length}
@@ -616,7 +628,7 @@ export default function Home() {
         </div>
 
         {visibleRecipes ? (
-          <section className="mt-4">
+          <section className="mt-4 scroll-mt-4" ref={recipesSectionRef}>
             {visibleRecipes.summary ? <p className="mb-3 rounded-lg border border-[#d7ded2] bg-white p-4 text-sm font-semibold leading-6 text-[#43564d] shadow-sm">{visibleRecipes.summary}</p> : null}
             <div className="grid gap-3">
               {(visibleRecipes.recipes || []).slice(0, showFavorites ? 50 : 3).map((recipe, index) => (

@@ -207,6 +207,52 @@ async function searchGoogleCustomImages(recipe: Recipe) {
   }
 }
 
+async function searchDuckDuckGoImages(recipe: Recipe) {
+  const query = makeRecipeImageQuery(recipe);
+
+  try {
+    const searchResponse = await fetch(
+      `https://duckduckgo.com/?q=${encodeURIComponent(query)}&iax=images&ia=images`,
+      {
+        headers: { "User-Agent": USER_AGENT, "Accept-Language": "da-DK,da;q=0.9,en;q=0.7" },
+        signal: AbortSignal.timeout(7000),
+      }
+    );
+    if (!searchResponse.ok) return [];
+
+    const html = await searchResponse.text();
+    const vqd =
+      html.match(/vqd=([\d-]+)&/)?.[1] ||
+      html.match(/"vqd":"([^"]+)"/)?.[1] ||
+      html.match(/vqd='([^']+)'/)?.[1];
+    if (!vqd) return [];
+
+    const imageResponse = await fetch(
+      `https://duckduckgo.com/i.js?l=us-en&o=json&q=${encodeURIComponent(query)}&vqd=${encodeURIComponent(vqd)}&f=,,,&p=1`,
+      {
+        headers: { "User-Agent": USER_AGENT, Referer: "https://duckduckgo.com/" },
+        signal: AbortSignal.timeout(7000),
+      }
+    );
+    if (!imageResponse.ok) return [];
+
+    const data = (await imageResponse.json()) as { results?: Array<{ image?: string; source?: string }> };
+    const terms = query.toLowerCase().split(/[^a-zæøå0-9]+/i).filter(Boolean);
+    return (data.results || [])
+      .map((result) => result.image || "")
+      .filter((imageUrl) => /^https?:\/\//i.test(imageUrl))
+      .filter((imageUrl) => !imageUrl.includes("duckduckgo.com"))
+      .map((imageUrl) => ({
+        url: imageUrl,
+        source: "DuckDuckGo Images",
+        score: scoreImageUrl(imageUrl, terms),
+      }))
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
 function makeFallbackFoodImage(recipe: Recipe): ImageCandidate {
   const title = encodeURIComponent(recipe.title || "Opskrift");
   const ingredients = encodeURIComponent((recipe.uses || recipe.ingredients || []).slice(0, 5).join(","));
@@ -258,6 +304,9 @@ async function searchGoogleImages(recipe: Recipe) {
   const customResults = await searchGoogleCustomImages(recipe);
   if (customResults.length) return customResults;
 
+  const duckDuckGoResults = await searchDuckDuckGoImages(recipe);
+  if (duckDuckGoResults.length) return duckDuckGoResults;
+
   const query = makeRecipeImageQuery(recipe);
   const url = `https://www.google.com/search?tbm=isch&hl=da&safe=active&q=${encodeURIComponent(query)}`;
 
@@ -305,63 +354,12 @@ async function searchGoogleImages(recipe: Recipe) {
   }
 }
 
-async function chooseBestImage(recipe: Recipe, candidates: ImageCandidate[]) {
-  if (!candidates.length || !SKOLEGPT_API_URL) return candidates[0];
-
-  const prompt = [
-    "Du skal vælge det bedste madfoto til opskriften.",
-    "Vurder de vedhæftede billedkandidater ud fra om retten og synlige ingredienser matcher titel og ingrediensliste.",
-    "Returner kun JSON: {\"selectedIndex\":0,\"reason\":\"kort begrundelse\"}.",
-    `Titel: ${recipe.title || ""}`,
-    `Ingredienser: ${(recipe.ingredients || recipe.uses || []).join(", ")}`,
-  ].join("\n");
-
-  try {
-    const response = await fetch(SKOLEGPT_API_URL, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        ...(SKOLEGPT_API_KEY ? { Authorization: `Bearer ${SKOLEGPT_API_KEY}` } : {}),
-      },
-      signal: AbortSignal.timeout(9000),
-      body: JSON.stringify({
-        model: process.env.SKOLEGPT_VISION_MODEL || SKOLEGPT_MODEL,
-        locale: "da-DK",
-        temperature: 0.1,
-        max_tokens: 160,
-        messages: [
-          { role: "system", content: "Returner kun JSON. Ingen markdown." },
-          {
-            role: "user",
-            content: [
-              { type: "text", text: prompt },
-              ...candidates.map((candidate) => ({
-                type: "image_url",
-                image_url: { url: candidate.url, detail: "low" },
-              })),
-            ],
-          },
-        ],
-      }),
-    });
-    if (!response.ok) return candidates[0];
-
-    const data = await response.json();
-    const content = data?.choices?.[0]?.message?.content ?? data?.message?.content ?? data;
-    const parsed = parseJson(content) as { selectedIndex?: number };
-    const selectedIndex = Math.max(0, Math.min(candidates.length - 1, Number(parsed.selectedIndex) || 0));
-    return candidates[selectedIndex] || candidates[0];
-  } catch {
-    return candidates[0];
-  }
-}
-
 async function attachRecipeImages(result: RecipeResponse) {
   const recipes = Array.isArray(result.recipes) ? result.recipes.slice(0, 3) : [];
   const recipesWithImages = await Promise.all(
     recipes.map(async (recipe) => {
       const candidates = await searchGoogleImages(recipe);
-      const chosen = await chooseBestImage(recipe, candidates);
+      const chosen = candidates[0];
       if (!chosen?.url) return recipe;
       return {
         ...recipe,
