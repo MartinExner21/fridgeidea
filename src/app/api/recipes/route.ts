@@ -15,7 +15,7 @@ type RecipeRequest = {
 
 const SKOLEGPT_API_URL = process.env.SKOLEGPT_API_URL;
 const SKOLEGPT_API_KEY = process.env.SKOLEGPT_API_KEY;
-const SKOLEGPT_MODEL = process.env.SKOLEGPT_MODEL || "gemma-4";
+const SKOLEGPT_MODEL = process.env.SKOLEGPT_MODEL || "google/gemma-4-26B-A4B-it";
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
 
@@ -160,6 +160,12 @@ export async function POST(request: NextRequest) {
   });
 
   if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    console.error("SkoleGPT recipe generation failed", {
+      status: response.status,
+      statusText: response.statusText,
+      detail: detail.substring(0, 500),
+    });
     return NextResponse.json({ error: "SkoleGPT kunne ikke lave opskrifter lige nu." }, { status: 502 });
   }
 

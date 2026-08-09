@@ -10,7 +10,8 @@ type AnalyzeRequest = {
 
 const SKOLEGPT_API_URL = process.env.SKOLEGPT_API_URL;
 const SKOLEGPT_API_KEY = process.env.SKOLEGPT_API_KEY;
-const SKOLEGPT_MODEL = process.env.SKOLEGPT_VISION_MODEL || process.env.SKOLEGPT_MODEL || "gemma-4";
+const SKOLEGPT_MODEL =
+  process.env.SKOLEGPT_VISION_MODEL || process.env.SKOLEGPT_MODEL || "google/gemma-4-26B-A4B-it";
 
 function fallbackAnalysis() {
   return {
@@ -96,6 +97,12 @@ export async function POST(request: NextRequest) {
   });
 
   if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    console.error("SkoleGPT image analysis failed", {
+      status: response.status,
+      statusText: response.statusText,
+      detail: detail.substring(0, 500),
+    });
     return NextResponse.json({ error: "SkoleGPT kunne ikke analysere billedet." }, { status: 502 });
   }
 
