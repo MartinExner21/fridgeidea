@@ -101,6 +101,7 @@ export default function Home() {
   const [inspirationText, setInspirationText] = useState("");
   const [recipes, setRecipes] = useState<RecipeResponse | null>(null);
   const [status, setStatus] = useState("Klar til at kigge i køleskabet");
+  const [photoCount, setPhotoCount] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isCooking, setIsCooking] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
@@ -113,6 +114,7 @@ export default function Home() {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const cameraSectionRef = useRef<HTMLElement | null>(null);
 
   const canCreate = useMemo(
     () => items.length > 0 || wishes.trim().length > 0 || inspirationLinks.length > 0 || inspirationText.trim().length > 0,
@@ -125,6 +127,8 @@ export default function Home() {
     const dataUrl = await compressImageDataUrl(await readFileAsDataUrl(file));
     setImageDataUrl(dataUrl);
     setRecipes(null);
+    setPhotoCount((count) => count + 1);
+    cameraSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     await analyzeImage(dataUrl);
   }
 
@@ -150,7 +154,7 @@ export default function Home() {
       const data = (await response.json()) as FridgeAnalysis;
       setAnalysis(data);
       setItems((current) => uniqueItems([...current, ...(data.items || [])]));
-      setStatus("Køleskabet er analyseret");
+      setStatus("Billedet er scannet. Tag gerne et billede mere af dørhylder, skuffer eller næste hylde.");
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Billedanalysen fejlede.");
     } finally {
@@ -236,6 +240,7 @@ export default function Home() {
     try {
       stopCamera(false);
       setIsCameraOpen(true);
+      window.setTimeout(() => cameraSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
         video: { facingMode: { ideal: nextFacingMode }, width: { ideal: 1200 }, height: { ideal: 2000 } },
@@ -270,6 +275,8 @@ export default function Home() {
     const dataUrl = canvas.toDataURL("image/jpeg", 0.72);
     stopCamera();
     setImageDataUrl(dataUrl);
+    setPhotoCount((count) => count + 1);
+    cameraSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
     await analyzeImage(dataUrl);
   }
 
@@ -339,7 +346,7 @@ export default function Home() {
           </div>
         </header>
 
-        <section className="overflow-hidden rounded-lg border border-[#d7ded2] bg-white shadow-sm">
+        <section className="overflow-hidden rounded-lg border border-[#d7ded2] bg-white shadow-sm" ref={cameraSectionRef}>
           {imageDataUrl ? (
             <div className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -361,8 +368,8 @@ export default function Home() {
             <div className="grid min-h-52 place-items-center bg-[#e9efe6] px-5 py-10 text-center">
               <div>
                 <Camera className="mx-auto text-[#255143]" size={38} aria-hidden="true" />
-                <p className="mt-3 text-lg font-black">Tag et billede af køleskabet</p>
-                <p className="mt-1 text-sm leading-6 text-[#60746a]">Åbn døren, få hylderne med, og lad FridgeIdea finde råvarerne.</p>
+                <p className="mt-3 text-lg font-black">Tag flere billeder af køleskabet</p>
+                <p className="mt-1 text-sm leading-6 text-[#60746a]">Start med hele køleskabet. Tag derefter nærbilleder af hylder, dør og skuffer.</p>
               </div>
             </div>
           )}
@@ -396,6 +403,13 @@ export default function Home() {
             </button>
             <input accept="image/*" capture="environment" className="sr-only" ref={fileInputRef} type="file" onChange={(event: ChangeEvent<HTMLInputElement>) => void handleImageFile(event.target.files?.[0])} />
             <canvas className="hidden" ref={canvasRef} />
+          </div>
+          <div className="border-t border-[#d7ded2] bg-[#f6f8f3] px-4 py-3">
+            <p className="text-sm font-semibold leading-6 text-[#43564d]">
+              {photoCount
+                ? `${photoCount} billede${photoCount === 1 ? "" : "r"} scannet. Tag gerne flere billeder, så FridgeIdea får dørhylder, grøntsagsskuffer og varer bagerst med.`
+                : "Tip: Flere billeder giver bedre forslag. Tag fx et billede af hele køleskabet, et af døren og et af skufferne."}
+            </p>
           </div>
         </section>
 
@@ -482,6 +496,7 @@ export default function Home() {
               setItems([]);
               setManualItem("");
               setAnalysis(null);
+              setPhotoCount(0);
               setWishes("");
               setBudget("");
               setCalories("");
