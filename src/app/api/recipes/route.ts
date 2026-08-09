@@ -176,6 +176,29 @@ function makeRecipeImageQuery(recipe: Recipe) {
   return `${title} ${ingredients.join(" ")} opskrift madfoto`;
 }
 
+function translateIngredientForMealDb(value: string) {
+  const normalized = value.toLowerCase();
+  const entries: Array<[RegExp, string]> = [
+    [/æg|egg/, "Egg"],
+    [/kylling|chicken/, "Chicken"],
+    [/okse|beef/, "Beef"],
+    [/svin|bacon|skinke|pork|ham/, "Pork"],
+    [/laks|salmon/, "Salmon"],
+    [/tun|tuna/, "Tuna"],
+    [/reje|shrimp|prawn/, "Shrimp"],
+    [/tomat|tomato/, "Tomato"],
+    [/ost|cheese/, "Cheese"],
+    [/ris|rice/, "Rice"],
+    [/pasta|spaghetti|noodle/, "Pasta"],
+    [/kartoffel|potato/, "Potato"],
+    [/svamp|mushroom/, "Mushroom"],
+    [/avocado/, "Avocado"],
+    [/bønne|bean/, "Beans"],
+    [/linse|lentil/, "Lentils"],
+  ];
+  return entries.find(([pattern]) => pattern.test(normalized))?.[1] || "";
+}
+
 async function searchGoogleCustomImages(recipe: Recipe) {
   if (!GOOGLE_SEARCH_API_KEY || !GOOGLE_CSE_ID) return [];
 
@@ -253,6 +276,33 @@ async function searchDuckDuckGoImages(recipe: Recipe) {
   }
 }
 
+async function searchMealDbImages(recipe: Recipe) {
+  const candidates = [recipe.title || "", ...(recipe.uses || []), ...(recipe.ingredients || [])]
+    .map(translateIngredientForMealDb)
+    .filter(Boolean);
+  const ingredient = [...new Set(candidates)][0];
+  if (!ingredient) return [];
+
+  try {
+    const response = await fetch(
+      `https://www.themealdb.com/api/json/v1/1/filter.php?i=${encodeURIComponent(ingredient)}`,
+      { signal: AbortSignal.timeout(7000) }
+    );
+    if (!response.ok) return [];
+    const data = (await response.json()) as { meals?: Array<{ strMeal?: string; strMealThumb?: string }> };
+    return (data.meals || [])
+      .slice(0, 5)
+      .map((meal, index) => ({
+        url: meal.strMealThumb || "",
+        source: "TheMealDB",
+        score: 5 - index,
+      }))
+      .filter((candidate) => /^https?:\/\//i.test(candidate.url));
+  } catch {
+    return [];
+  }
+}
+
 function makeFallbackFoodImage(recipe: Recipe): ImageCandidate {
   const title = encodeURIComponent(recipe.title || "Opskrift");
   const ingredients = encodeURIComponent((recipe.uses || recipe.ingredients || []).slice(0, 5).join(","));
@@ -303,6 +353,9 @@ async function searchWikimediaImages(recipe: Recipe) {
 async function searchGoogleImages(recipe: Recipe) {
   const customResults = await searchGoogleCustomImages(recipe);
   if (customResults.length) return customResults;
+
+  const mealDbResults = await searchMealDbImages(recipe);
+  if (mealDbResults.length) return mealDbResults;
 
   const duckDuckGoResults = await searchDuckDuckGoImages(recipe);
   if (duckDuckGoResults.length) return duckDuckGoResults;
