@@ -238,7 +238,7 @@ export default function Home() {
       setIsCameraOpen(true);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: nextFacingMode }, width: { ideal: 1600 }, height: { ideal: 1200 } },
+        video: { facingMode: { ideal: nextFacingMode }, width: { ideal: 1200 }, height: { ideal: 2000 } },
       });
       cameraStreamRef.current = stream;
       if (videoRef.current) {
@@ -343,7 +343,7 @@ export default function Home() {
           {imageDataUrl ? (
             <div className="relative">
               {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img alt="Dit køleskab" className="max-h-[46dvh] w-full object-cover" src={imageDataUrl} />
+              <img alt="Dit køleskab" className="max-h-[62dvh] w-full bg-[#101815] object-contain" src={imageDataUrl} />
               <button
                 className="absolute right-3 top-3 flex h-10 w-10 items-center justify-center rounded-md bg-white/95 text-[#255143] shadow-sm"
                 onClick={() => {
@@ -369,7 +369,7 @@ export default function Home() {
 
           {isCameraOpen ? (
             <div className="border-t border-[#d7ded2] bg-[#101815]">
-              <video autoPlay className="aspect-[4/3] w-full object-cover" muted playsInline ref={videoRef} />
+              <video autoPlay className="aspect-[3/5] max-h-[68dvh] w-full object-cover" muted playsInline ref={videoRef} />
               <div className="grid grid-cols-[1fr_48px_48px] gap-2 bg-white p-2">
                 <button className="flex h-12 items-center justify-center gap-2 rounded-md bg-[#255143] px-3 text-sm font-black text-white" onClick={capturePhoto} type="button">
                   <Camera size={18} aria-hidden="true" />
