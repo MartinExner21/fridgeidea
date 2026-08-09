@@ -142,7 +142,8 @@ export async function POST(request: NextRequest) {
     "Hvis brugeren vælger fridge-only, må shoppingList være tom eller kun basisvarer som salt, peber, olie og vand.",
     "Hvis indkøb er tilladt, må du foreslå få, billige tilkøb.",
     "Gør opskrifterne konkrete, realistiske og lette at følge.",
-    "Returner kun valid JSON med summary og recipes.",
+    "Returner selve JSON-objektet direkte. Læg aldrig JSON som tekst inde i summary eller andre felter.",
+    "Returner kun valid JSON med summary og recipes. recipes skal altid indeholde præcis 3 opskrifter.",
   ].join(" ");
 
   const user = {
@@ -169,8 +170,7 @@ export async function POST(request: NextRequest) {
       model: SKOLEGPT_MODEL,
       locale: body.locale || "da-DK",
       temperature: 0.7,
-      max_tokens: 2200,
-      response_format: { type: "json_object" },
+      max_tokens: 3500,
       messages: [
         { role: "system", content: system },
         { role: "user", content: JSON.stringify(user) },
