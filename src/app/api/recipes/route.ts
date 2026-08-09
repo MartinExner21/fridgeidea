@@ -209,9 +209,10 @@ async function searchGoogleCustomImages(recipe: Recipe) {
 
 function makeFallbackFoodImage(recipe: Recipe): ImageCandidate {
   const title = encodeURIComponent(recipe.title || "Opskrift");
+  const ingredients = encodeURIComponent((recipe.uses || recipe.ingredients || []).slice(0, 5).join(","));
   return {
-    url: `https://placehold.co/900x700/e6f0e7/255143?text=${title}`,
-    source: "Image fallback",
+    url: `/api/recipe-image?title=${title}&ingredients=${ingredients}`,
+    source: "FridgeIdea illustration",
     score: 0,
   };
 }

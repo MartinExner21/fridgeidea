@@ -10,12 +10,14 @@ import {
   Mic,
   Plus,
   Send,
+  Share2,
   Sparkles,
+  Star,
   SwitchCamera,
   Trash2,
   X,
 } from "lucide-react";
-import { ChangeEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 
 type Mode = "fridge-only" | "shopping-ok";
 
@@ -46,6 +48,23 @@ type RecipeResponse = {
   summary?: string;
   recipes?: Recipe[];
 };
+
+const FAVORITES_KEY = "fridgeidea:favorites";
+
+function recipeId(recipe: Recipe) {
+  return `${recipe.title || ""}|${(recipe.ingredients || []).join(",")}`.toLowerCase();
+}
+
+function recipeShareText(recipe: Recipe) {
+  return [
+    recipe.title || "FridgeIdea-ret",
+    recipe.why || "",
+    recipe.ingredients?.length ? `Ingredienser: ${recipe.ingredients.join(", ")}` : "",
+    recipe.steps?.length ? `Opskrift:\n${recipe.steps.map((step, index) => `${index + 1}. ${step}`).join("\n")}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+}
 
 function readFileAsDataUrl(file: File) {
   return new Promise<string>((resolve, reject) => {
@@ -103,6 +122,16 @@ export default function Home() {
   const [inspirationLinks, setInspirationLinks] = useState<string[]>([]);
   const [inspirationText, setInspirationText] = useState("");
   const [recipes, setRecipes] = useState<RecipeResponse | null>(null);
+  const [favorites, setFavorites] = useState<Recipe[]>(() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const stored = window.localStorage.getItem(FAVORITES_KEY);
+      return stored ? (JSON.parse(stored) as Recipe[]) : [];
+    } catch {
+      return [];
+    }
+  });
+  const [showFavorites, setShowFavorites] = useState(false);
   const [status, setStatus] = useState("Klar til at kigge i køleskabet");
   const [photoCount, setPhotoCount] = useState(0);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
@@ -123,6 +152,50 @@ export default function Home() {
     () => items.length > 0 || wishes.trim().length > 0 || inspirationLinks.length > 0 || inspirationText.trim().length > 0,
     [items, wishes, inspirationLinks, inspirationText]
   );
+  const visibleRecipes = showFavorites
+    ? { summary: favorites.length ? "Dine gemte FridgeIdea-retter på denne enhed." : "Du har ikke gemt nogen retter endnu.", recipes: favorites }
+    : recipes;
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(FAVORITES_KEY, JSON.stringify(favorites.slice(0, 50)));
+    } catch {
+      // Local storage can be unavailable in private mode.
+    }
+  }, [favorites]);
+
+  function isFavorite(recipe: Recipe) {
+    const id = recipeId(recipe);
+    return favorites.some((favorite) => recipeId(favorite) === id);
+  }
+
+  function toggleFavorite(recipe: Recipe) {
+    const id = recipeId(recipe);
+    setFavorites((current) => {
+      if (current.some((favorite) => recipeId(favorite) === id)) {
+        setStatus("Fjernet fra favoritter");
+        return current.filter((favorite) => recipeId(favorite) !== id);
+      }
+      setStatus("Gemt i favoritter");
+      return [recipe, ...current].slice(0, 50);
+    });
+  }
+
+  async function shareRecipe(recipe: Recipe) {
+    const title = recipe.title || "FridgeIdea-ret";
+    const text = recipeShareText(recipe);
+    try {
+      if (navigator.share) {
+        await navigator.share({ title, text, url: "https://fridgeidea.vercel.app" });
+        setStatus("Retten er delt");
+        return;
+      }
+      await navigator.clipboard.writeText(`${text}\n\nhttps://fridgeidea.vercel.app`);
+      setStatus("Retten er kopieret til udklipsholderen");
+    } catch {
+      setStatus("Deling blev afbrudt");
+    }
+  }
 
   async function handleImageFile(file?: File) {
     if (!file) return;
@@ -191,6 +264,7 @@ export default function Home() {
     }
 
     setIsCooking(true);
+    setShowFavorites(false);
     setStatus("Opfinder tre retter...");
     try {
       const response = await fetch("/api/recipes", {
@@ -354,8 +428,25 @@ export default function Home() {
             <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#60746a]">FridgeIdea</p>
             <h1 className="text-3xl font-black leading-tight sm:text-4xl">Hvad kan vi lave?</h1>
           </div>
-          <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-md bg-[#255143] text-white shadow-sm">
-            <ChefHat size={25} aria-hidden="true" />
+          <div className="flex shrink-0 items-center gap-2">
+            <button
+              className={`relative flex h-12 w-12 items-center justify-center rounded-md border shadow-sm ${
+                showFavorites ? "border-[#255143] bg-[#255143] text-white" : "border-[#d7ded2] bg-white text-[#255143]"
+              }`}
+              onClick={() => setShowFavorites((value) => !value)}
+              title="Se favoritter"
+              type="button"
+            >
+              <Star fill={showFavorites ? "currentColor" : "none"} size={22} aria-hidden="true" />
+              {favorites.length ? (
+                <span className="absolute -right-1 -top-1 grid h-5 min-w-5 place-items-center rounded-full bg-[#cf5d4e] px-1 text-[11px] font-black text-white">
+                  {favorites.length}
+                </span>
+              ) : null}
+            </button>
+            <div className="flex h-12 w-12 items-center justify-center rounded-md bg-[#255143] text-white shadow-sm">
+              <ChefHat size={25} aria-hidden="true" />
+            </div>
           </div>
         </header>
 
@@ -389,7 +480,7 @@ export default function Home() {
 
           {isCameraOpen ? (
             <div className="border-t border-[#d7ded2] bg-[#101815]">
-              <video autoPlay className="aspect-[3/5] max-h-[68dvh] w-full bg-[#101815] object-contain" muted playsInline ref={videoRef} />
+              <video autoPlay className="h-[48dvh] min-h-[300px] w-full bg-[#101815] object-contain" muted playsInline ref={videoRef} />
               <div className="grid grid-cols-[1fr_48px_48px] gap-2 bg-white p-2">
                 <button className="flex h-12 items-center justify-center gap-2 rounded-md bg-[#255143] px-3 text-sm font-black text-white" onClick={capturePhoto} type="button">
                   <Camera size={18} aria-hidden="true" />
@@ -524,20 +615,37 @@ export default function Home() {
           </div>
         </div>
 
-        {recipes ? (
+        {visibleRecipes ? (
           <section className="mt-4">
-            {recipes.summary ? <p className="mb-3 rounded-lg border border-[#d7ded2] bg-white p-4 text-sm font-semibold leading-6 text-[#43564d] shadow-sm">{recipes.summary}</p> : null}
+            {visibleRecipes.summary ? <p className="mb-3 rounded-lg border border-[#d7ded2] bg-white p-4 text-sm font-semibold leading-6 text-[#43564d] shadow-sm">{visibleRecipes.summary}</p> : null}
             <div className="grid gap-3">
-              {(recipes.recipes || []).slice(0, 3).map((recipe, index) => (
+              {(visibleRecipes.recipes || []).slice(0, showFavorites ? 50 : 3).map((recipe, index) => (
                 <article className="rounded-lg border border-[#d7ded2] bg-white p-4 shadow-sm" key={`${recipe.title}-${index}`}>
                   <div className="flex items-start justify-between gap-3">
                     <div>
-                      <p className="text-xs font-black uppercase tracking-[0.16em] text-[#60746a]">Ret {index + 1}</p>
+                      <p className="text-xs font-black uppercase tracking-[0.16em] text-[#60746a]">{showFavorites ? "Favorit" : `Ret ${index + 1}`}</p>
                       <h2 className="mt-1 text-2xl font-black leading-tight">{recipe.title || "Ny ret"}</h2>
                     </div>
-                    <button className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-[#fff0ee] text-[#b34238]" onClick={() => setRecipes((current) => ({ ...current, recipes: (current?.recipes || []).filter((_, recipeIndex) => recipeIndex !== index) }))} title="Fjern ret" type="button">
-                      <Trash2 size={17} aria-hidden="true" />
-                    </button>
+                    <div className="flex shrink-0 gap-2">
+                      <button
+                        className={`flex h-10 w-10 items-center justify-center rounded-md border ${
+                          isFavorite(recipe) ? "border-[#f0c766] bg-[#fff8dc] text-[#9b6b00]" : "border-[#ccd8cf] text-[#255143]"
+                        }`}
+                        onClick={() => toggleFavorite(recipe)}
+                        title={isFavorite(recipe) ? "Fjern fra favoritter" : "Gem som favorit"}
+                        type="button"
+                      >
+                        <Star fill={isFavorite(recipe) ? "currentColor" : "none"} size={17} aria-hidden="true" />
+                      </button>
+                      <button className="flex h-10 w-10 items-center justify-center rounded-md border border-[#ccd8cf] text-[#255143]" onClick={() => void shareRecipe(recipe)} title="Del ret" type="button">
+                        <Share2 size={17} aria-hidden="true" />
+                      </button>
+                      {!showFavorites ? (
+                        <button className="flex h-10 w-10 items-center justify-center rounded-md bg-[#fff0ee] text-[#b34238]" onClick={() => setRecipes((current) => ({ ...current, recipes: (current?.recipes || []).filter((_, recipeIndex) => recipeIndex !== index) }))} title="Fjern ret" type="button">
+                          <Trash2 size={17} aria-hidden="true" />
+                        </button>
+                      ) : null}
+                    </div>
                   </div>
                   {recipe.imageUrl ? (
                     <div className="mt-3 overflow-hidden rounded-md bg-[#101815]">
