@@ -37,6 +37,9 @@ type Recipe = {
   shoppingList?: string[];
   ingredients?: string[];
   steps?: string[];
+  imageUrl?: string;
+  imageAlt?: string;
+  imageSource?: string;
 };
 
 type RecipeResponse = {
@@ -243,9 +246,19 @@ export default function Home() {
       window.setTimeout(() => cameraSectionRef.current?.scrollIntoView({ block: "start", behavior: "smooth" }), 0);
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
-        video: { facingMode: { ideal: nextFacingMode }, width: { ideal: 1200 }, height: { ideal: 2000 } },
+        video: {
+          facingMode: { ideal: nextFacingMode },
+          width: { ideal: 1920 },
+          height: { ideal: 2560 },
+          aspectRatio: { ideal: 0.75 },
+        },
       });
       cameraStreamRef.current = stream;
+      const [videoTrack] = stream.getVideoTracks();
+      const capabilities = videoTrack?.getCapabilities?.() as MediaTrackCapabilities & { zoom?: { min?: number } };
+      if (videoTrack && capabilities?.zoom?.min != null) {
+        await videoTrack.applyConstraints({ advanced: [{ zoom: capabilities.zoom.min } as MediaTrackConstraintSet] }).catch(() => undefined);
+      }
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
@@ -376,7 +389,7 @@ export default function Home() {
 
           {isCameraOpen ? (
             <div className="border-t border-[#d7ded2] bg-[#101815]">
-              <video autoPlay className="aspect-[3/5] max-h-[68dvh] w-full object-cover" muted playsInline ref={videoRef} />
+              <video autoPlay className="aspect-[3/5] max-h-[68dvh] w-full bg-[#101815] object-contain" muted playsInline ref={videoRef} />
               <div className="grid grid-cols-[1fr_48px_48px] gap-2 bg-white p-2">
                 <button className="flex h-12 items-center justify-center gap-2 rounded-md bg-[#255143] px-3 text-sm font-black text-white" onClick={capturePhoto} type="button">
                   <Camera size={18} aria-hidden="true" />
@@ -526,6 +539,18 @@ export default function Home() {
                       <Trash2 size={17} aria-hidden="true" />
                     </button>
                   </div>
+                  {recipe.imageUrl ? (
+                    <div className="mt-3 overflow-hidden rounded-md bg-[#101815]">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img
+                        alt={recipe.imageAlt || recipe.title || "Opskriftsbillede"}
+                        className="aspect-[4/3] w-full object-cover"
+                        loading="lazy"
+                        referrerPolicy="no-referrer"
+                        src={recipe.imageUrl}
+                      />
+                    </div>
+                  ) : null}
                   {recipe.why ? <p className="mt-2 text-sm font-semibold leading-6 text-[#43564d]">{recipe.why}</p> : null}
                   <div className="mt-3 grid grid-cols-3 gap-2 text-center text-xs font-black text-[#255143]">
                     <span className="rounded-md bg-[#e6f0e7] px-2 py-2">{recipe.time || "hurtig"}</span>

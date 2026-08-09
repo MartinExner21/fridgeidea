@@ -13,6 +13,33 @@ type RecipeRequest = {
   locale?: string;
 };
 
+type Recipe = {
+  title?: string;
+  why?: string;
+  time?: string;
+  servings?: number | string;
+  estimatedCost?: string;
+  calories?: string;
+  uses?: string[];
+  shoppingList?: string[];
+  ingredients?: string[];
+  steps?: string[];
+  imageUrl?: string;
+  imageAlt?: string;
+  imageSource?: string;
+};
+
+type RecipeResponse = {
+  summary?: string;
+  recipes?: Recipe[];
+};
+
+type ImageCandidate = {
+  url: string;
+  source?: string;
+  score: number;
+};
+
 const SKOLEGPT_API_URL = process.env.SKOLEGPT_API_URL;
 const SKOLEGPT_API_KEY = process.env.SKOLEGPT_API_KEY;
 const SKOLEGPT_MODEL = process.env.SKOLEGPT_MODEL || "google/gemma-4-26B-A4B-it";
@@ -43,7 +70,7 @@ function demoRecipes() {
         estimatedCost: "0-35 kr.",
         calories: "ca. 380 kcal pr. portion",
         uses: ["yoghurt", "gulerødder", "salat", "tomater"],
-        shoppingList: ["evt. brød eller ris"],
+        shoppingList: [],
         ingredients: ["salat", "tomater", "revet gulerod", "yoghurt", "citron/eddike", "krydderier"],
         steps: ["Rør dressing.", "Snit grønt.", "Vend det hele sammen.", "Top med rester eller brød ved siden af."],
       },
@@ -55,7 +82,7 @@ function demoRecipes() {
         estimatedCost: "0-20 kr.",
         calories: "ca. 520 kcal",
         uses: ["tomater", "ost", "salat"],
-        shoppingList: ["brød hvis du mangler"],
+        shoppingList: [],
         ingredients: ["brød", "ost", "tomater", "salat", "sennep eller dressing"],
         steps: ["Byg toasten.", "Steg eller rist til osten smelter.", "Server med salat og tomat."],
       },
@@ -104,23 +131,176 @@ function parseJson(content: unknown) {
   return { summary: cleaned.substring(0, 700), recipes: [] };
 }
 
-function normalizeRecipeResponse(parsed: unknown) {
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return parsed;
+function normalizeRecipeResponse(parsed: unknown): RecipeResponse {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { summary: String(parsed || "").substring(0, 700), recipes: [] };
+  }
 
   const result = parsed as { summary?: unknown; recipes?: unknown };
-  if (Array.isArray(result.recipes) && result.recipes.length) return result;
+  if (Array.isArray(result.recipes) && result.recipes.length) return result as RecipeResponse;
 
   if (typeof result.summary === "string") {
     const nested = parseJson(result.summary);
     if (nested && typeof nested === "object" && !Array.isArray(nested)) {
       const nestedResult = nested as { summary?: unknown; recipes?: unknown };
       if (Array.isArray(nestedResult.recipes) && nestedResult.recipes.length) {
-        return nestedResult;
+        return nestedResult as RecipeResponse;
       }
     }
   }
 
-  return result;
+  return result as RecipeResponse;
+}
+
+function cleanGoogleImageUrl(rawUrl: string) {
+  return rawUrl
+    .replace(/\\u003d/g, "=")
+    .replace(/\\u0026/g, "&")
+    .replace(/\\\//g, "/")
+    .replace(/&amp;/g, "&");
+}
+
+function scoreImageUrl(url: string, terms: string[]) {
+  const lowerUrl = decodeURIComponent(url).toLowerCase();
+  const termScore = terms.filter((term) => term.length > 2 && lowerUrl.includes(term.toLowerCase())).length;
+  const sizeScore = /w\d{3,}|h\d{3,}|=s\d{3,}/i.test(url) ? 1 : 0;
+  const formatScore = /\.(jpe?g|png|webp)(?:[?&]|$)/i.test(url) ? 1 : 0;
+  return termScore * 3 + sizeScore + formatScore;
+}
+
+async function searchGoogleImages(recipe: Recipe) {
+  const title = recipe.title || "madret";
+  const ingredients = (recipe.ingredients || recipe.uses || []).slice(0, 6);
+  const query = `${title} ${ingredients.join(" ")} opskrift madfoto`;
+  const url = `https://www.google.com/search?tbm=isch&hl=da&safe=active&q=${encodeURIComponent(query)}`;
+
+  try {
+    const response = await fetch(url, {
+      headers: {
+        "User-Agent": USER_AGENT,
+        "Accept-Language": "da-DK,da;q=0.9,en;q=0.7",
+      },
+      signal: AbortSignal.timeout(7000),
+    });
+    if (!response.ok) return [];
+
+    const html = await response.text();
+    const terms = [title, ...ingredients]
+      .join(" ")
+      .toLowerCase()
+      .split(/[^a-zæøå0-9]+/i)
+      .filter(Boolean);
+    const found = new Map<string, ImageCandidate>();
+    const patterns = [
+      /"(https?:\\?\/\\?\/[^"]+?\.(?:jpg|jpeg|png|webp)(?:\?[^"]*)?)"/gi,
+      /"(https?:\\?\/\\?\/encrypted-tbn\d\.gstatic\.com\/images\?[^"]+)"/gi,
+      /\["(https?:\\?\/\\?\/[^"]+?)",\d{2,5},\d{2,5}\]/gi,
+    ];
+
+    for (const pattern of patterns) {
+      for (const match of html.matchAll(pattern)) {
+        const imageUrl = cleanGoogleImageUrl(match[1] || "");
+        if (!imageUrl.startsWith("http") || imageUrl.includes("google.com/logos")) continue;
+        if (!found.has(imageUrl)) {
+          found.set(imageUrl, { url: imageUrl, source: "Google Images", score: scoreImageUrl(imageUrl, terms) });
+        }
+        if (found.size >= 12) break;
+      }
+      if (found.size >= 12) break;
+    }
+
+    return [...found.values()].sort((a, b) => b.score - a.score).slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+async function chooseBestImage(recipe: Recipe, candidates: ImageCandidate[]) {
+  if (!candidates.length || !SKOLEGPT_API_URL) return candidates[0];
+
+  const prompt = [
+    "Du skal vælge det bedste madfoto til opskriften.",
+    "Vurder de vedhæftede billedkandidater ud fra om retten og synlige ingredienser matcher titel og ingrediensliste.",
+    "Returner kun JSON: {\"selectedIndex\":0,\"reason\":\"kort begrundelse\"}.",
+    `Titel: ${recipe.title || ""}`,
+    `Ingredienser: ${(recipe.ingredients || recipe.uses || []).join(", ")}`,
+  ].join("\n");
+
+  try {
+    const response = await fetch(SKOLEGPT_API_URL, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(SKOLEGPT_API_KEY ? { Authorization: `Bearer ${SKOLEGPT_API_KEY}` } : {}),
+      },
+      signal: AbortSignal.timeout(9000),
+      body: JSON.stringify({
+        model: process.env.SKOLEGPT_VISION_MODEL || SKOLEGPT_MODEL,
+        locale: "da-DK",
+        temperature: 0.1,
+        max_tokens: 160,
+        messages: [
+          { role: "system", content: "Returner kun JSON. Ingen markdown." },
+          {
+            role: "user",
+            content: [
+              { type: "text", text: prompt },
+              ...candidates.map((candidate) => ({
+                type: "image_url",
+                image_url: { url: candidate.url, detail: "low" },
+              })),
+            ],
+          },
+        ],
+      }),
+    });
+    if (!response.ok) return candidates[0];
+
+    const data = await response.json();
+    const content = data?.choices?.[0]?.message?.content ?? data?.message?.content ?? data;
+    const parsed = parseJson(content) as { selectedIndex?: number };
+    const selectedIndex = Math.max(0, Math.min(candidates.length - 1, Number(parsed.selectedIndex) || 0));
+    return candidates[selectedIndex] || candidates[0];
+  } catch {
+    return candidates[0];
+  }
+}
+
+async function attachRecipeImages(result: RecipeResponse) {
+  const recipes = Array.isArray(result.recipes) ? result.recipes.slice(0, 3) : [];
+  const recipesWithImages = await Promise.all(
+    recipes.map(async (recipe) => {
+      const candidates = await searchGoogleImages(recipe);
+      const chosen = await chooseBestImage(recipe, candidates);
+      if (!chosen?.url) return recipe;
+      return {
+        ...recipe,
+        imageUrl: chosen.url,
+        imageAlt: recipe.title ? `Billede der minder om ${recipe.title}` : "Opskriftsbillede",
+        imageSource: chosen.source || "Google Images",
+      };
+    })
+  );
+
+  return {
+    ...result,
+    recipes: recipesWithImages,
+  };
+}
+
+function enforceFridgeOnly(result: RecipeResponse, mode: RecipeRequest["mode"]) {
+  if (mode !== "fridge-only") return result;
+
+  return {
+    ...result,
+    recipes: (result.recipes || []).map((recipe) => ({
+      ...recipe,
+      shoppingList: [],
+      why: recipe.why
+        ? `${recipe.why} Den er lavet til kun at bruge de fundne eller manuelt skrevne varer plus basisvarer.`
+        : "Lavet til kun at bruge de fundne eller manuelt skrevne varer plus basisvarer.",
+    })),
+  };
 }
 
 export async function POST(request: NextRequest) {
@@ -139,7 +319,8 @@ export async function POST(request: NextRequest) {
   const system = [
     "Du er FridgeIdea, en dansk kokkeassistent til mobilbrug.",
     "Du skal opfinde præcis 3 madretter, der bedst muligt matcher køleskab, ønsker, budget, kalorier og inspirationslinks.",
-    "Hvis brugeren vælger fridge-only, må shoppingList være tom eller kun basisvarer som salt, peber, olie og vand.",
+    "Når mode er fridge-only eller brugeren har valgt Kun køleskab, må du ikke opfinde ingredienser, som ikke findes i fridgeItems eller inspirationsteksten. Ingredienser, uses og steps må kun bruge de fundne/manuelt skrevne varer plus basisvarer: vand, salt, peber, olie, smør og almindelige tørrede krydderier.",
+    "Når mode er fridge-only, skal shoppingList være tom. Hvis en ret kræver noget der ikke er i fridgeItems, skal du vælge en anden ret.",
     "Hvis indkøb er tilladt, må du foreslå få, billige tilkøb.",
     "Gør opskrifterne konkrete, realistiske og lette at følge.",
     "Returner selve JSON-objektet direkte. Læg aldrig JSON som tekst inde i summary eller andre felter.",
@@ -190,5 +371,6 @@ export async function POST(request: NextRequest) {
 
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content ?? data?.message?.content ?? data;
-  return NextResponse.json(normalizeRecipeResponse(parseJson(content)));
+  const parsed = enforceFridgeOnly(normalizeRecipeResponse(parseJson(content)), body.mode || "shopping-ok");
+  return NextResponse.json(await attachRecipeImages(parsed));
 }
