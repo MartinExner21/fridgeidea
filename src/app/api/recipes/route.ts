@@ -43,6 +43,8 @@ type ImageCandidate = {
 const SKOLEGPT_API_URL = process.env.SKOLEGPT_API_URL;
 const SKOLEGPT_API_KEY = process.env.SKOLEGPT_API_KEY;
 const SKOLEGPT_MODEL = process.env.SKOLEGPT_MODEL || "google/gemma-4-26B-A4B-it";
+const GOOGLE_SEARCH_API_KEY = process.env.GOOGLE_SEARCH_API_KEY;
+const GOOGLE_CSE_ID = process.env.GOOGLE_CSE_ID;
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36";
 
@@ -168,10 +170,59 @@ function scoreImageUrl(url: string, terms: string[]) {
   return termScore * 3 + sizeScore + formatScore;
 }
 
-async function searchGoogleImages(recipe: Recipe) {
+function makeRecipeImageQuery(recipe: Recipe) {
   const title = recipe.title || "madret";
   const ingredients = (recipe.ingredients || recipe.uses || []).slice(0, 6);
-  const query = `${title} ${ingredients.join(" ")} opskrift madfoto`;
+  return `${title} ${ingredients.join(" ")} opskrift madfoto`;
+}
+
+async function searchGoogleCustomImages(recipe: Recipe) {
+  if (!GOOGLE_SEARCH_API_KEY || !GOOGLE_CSE_ID) return [];
+
+  const query = makeRecipeImageQuery(recipe);
+  const url = new URL("https://www.googleapis.com/customsearch/v1");
+  url.searchParams.set("key", GOOGLE_SEARCH_API_KEY);
+  url.searchParams.set("cx", GOOGLE_CSE_ID);
+  url.searchParams.set("searchType", "image");
+  url.searchParams.set("safe", "active");
+  url.searchParams.set("num", "5");
+  url.searchParams.set("q", query);
+
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(7000) });
+    if (!response.ok) return [];
+    const data = (await response.json()) as { items?: Array<{ link?: string; displayLink?: string }> };
+    const terms = query.toLowerCase().split(/[^a-zæøå0-9]+/i).filter(Boolean);
+    return (data.items || [])
+      .map((item) => item.link || "")
+      .filter((link) => /^https?:\/\//i.test(link))
+      .map((link) => ({
+        url: link,
+        source: "Google Images",
+        score: scoreImageUrl(link, terms),
+      }))
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
+}
+
+function makeFallbackFoodImage(recipe: Recipe): ImageCandidate {
+  const query = encodeURIComponent(
+    [recipe.title || "food", ...(recipe.uses || recipe.ingredients || []).slice(0, 3)].join(",")
+  );
+  return {
+    url: `https://source.unsplash.com/900x700/?${query}`,
+    source: "Food image fallback",
+    score: 0,
+  };
+}
+
+async function searchGoogleImages(recipe: Recipe) {
+  const customResults = await searchGoogleCustomImages(recipe);
+  if (customResults.length) return customResults;
+
+  const query = makeRecipeImageQuery(recipe);
   const url = `https://www.google.com/search?tbm=isch&hl=da&safe=active&q=${encodeURIComponent(query)}`;
 
   try {
@@ -185,8 +236,7 @@ async function searchGoogleImages(recipe: Recipe) {
     if (!response.ok) return [];
 
     const html = await response.text();
-    const terms = [title, ...ingredients]
-      .join(" ")
+    const terms = query
       .toLowerCase()
       .split(/[^a-zæøå0-9]+/i)
       .filter(Boolean);
@@ -209,9 +259,10 @@ async function searchGoogleImages(recipe: Recipe) {
       if (found.size >= 12) break;
     }
 
-    return [...found.values()].sort((a, b) => b.score - a.score).slice(0, 5);
+    const scraped = [...found.values()].sort((a, b) => b.score - a.score).slice(0, 5);
+    return scraped.length ? scraped : [makeFallbackFoodImage(recipe)];
   } catch {
-    return [];
+    return [makeFallbackFoodImage(recipe)];
   }
 }
 

@@ -28,7 +28,11 @@ SKOLEGPT_API_KEY=
 SKOLEGPT_MODEL=google/gemma-4-26B-A4B-it
 SKOLEGPT_VISION_MODEL=google/gemma-4-26B-A4B-it
 SKOLEGPT_STT_API_URL=
+GOOGLE_SEARCH_API_KEY=
+GOOGLE_CSE_ID=
 ```
+
+`GOOGLE_SEARCH_API_KEY` og `GOOGLE_CSE_ID` bruges til opskriftsbilleder via Google Custom Search med `searchType=image`. Hvis de mangler, forsøger appen først almindelig Google-billedsøgning og bruger derefter en madfoto-fallback.
 
 Valgfrit, hvis du senere vil bruge eksisterende TTS-rute:
 
