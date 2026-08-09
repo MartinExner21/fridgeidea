@@ -104,6 +104,25 @@ function parseJson(content: unknown) {
   return { summary: cleaned.substring(0, 700), recipes: [] };
 }
 
+function normalizeRecipeResponse(parsed: unknown) {
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return parsed;
+
+  const result = parsed as { summary?: unknown; recipes?: unknown };
+  if (Array.isArray(result.recipes) && result.recipes.length) return result;
+
+  if (typeof result.summary === "string") {
+    const nested = parseJson(result.summary);
+    if (nested && typeof nested === "object" && !Array.isArray(nested)) {
+      const nestedResult = nested as { summary?: unknown; recipes?: unknown };
+      if (Array.isArray(nestedResult.recipes) && nestedResult.recipes.length) {
+        return nestedResult;
+      }
+    }
+  }
+
+  return result;
+}
+
 export async function POST(request: NextRequest) {
   const body = (await request.json()) as RecipeRequest;
   const fridgeItems = (body.fridgeItems || []).map((item) => item.trim()).filter(Boolean);
@@ -171,5 +190,5 @@ export async function POST(request: NextRequest) {
 
   const data = await response.json();
   const content = data?.choices?.[0]?.message?.content ?? data?.message?.content ?? data;
-  return NextResponse.json(parseJson(content));
+  return NextResponse.json(normalizeRecipeResponse(parseJson(content)));
 }
