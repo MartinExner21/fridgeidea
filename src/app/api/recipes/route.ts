@@ -208,14 +208,49 @@ async function searchGoogleCustomImages(recipe: Recipe) {
 }
 
 function makeFallbackFoodImage(recipe: Recipe): ImageCandidate {
-  const query = encodeURIComponent(
-    [recipe.title || "food", ...(recipe.uses || recipe.ingredients || []).slice(0, 3)].join(",")
-  );
+  const title = encodeURIComponent(recipe.title || "Opskrift");
   return {
-    url: `https://source.unsplash.com/900x700/?${query}`,
-    source: "Food image fallback",
+    url: `https://placehold.co/900x700/e6f0e7/255143?text=${title}`,
+    source: "Image fallback",
     score: 0,
   };
+}
+
+async function searchWikimediaImages(recipe: Recipe) {
+  const query = makeRecipeImageQuery(recipe);
+  const url = new URL("https://commons.wikimedia.org/w/api.php");
+  url.searchParams.set("action", "query");
+  url.searchParams.set("generator", "search");
+  url.searchParams.set("gsrnamespace", "6");
+  url.searchParams.set("gsrlimit", "8");
+  url.searchParams.set("gsrsearch", query);
+  url.searchParams.set("prop", "imageinfo");
+  url.searchParams.set("iiprop", "url|mime");
+  url.searchParams.set("iiurlwidth", "900");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("origin", "*");
+
+  try {
+    const response = await fetch(url, { signal: AbortSignal.timeout(7000) });
+    if (!response.ok) return [];
+    const data = (await response.json()) as {
+      query?: { pages?: Record<string, { imageinfo?: Array<{ thumburl?: string; url?: string; mime?: string }> }> };
+    };
+    const terms = query.toLowerCase().split(/[^a-zæøå0-9]+/i).filter(Boolean);
+    return Object.values(data.query?.pages || {})
+      .flatMap((page) => page.imageinfo || [])
+      .filter((info) => info.mime?.startsWith("image/"))
+      .map((info) => info.thumburl || info.url || "")
+      .filter((imageUrl) => /^https?:\/\//i.test(imageUrl))
+      .map((imageUrl) => ({
+        url: imageUrl,
+        source: "Wikimedia Commons",
+        score: scoreImageUrl(imageUrl, terms),
+      }))
+      .slice(0, 5);
+  } catch {
+    return [];
+  }
 }
 
 async function searchGoogleImages(recipe: Recipe) {
@@ -260,9 +295,12 @@ async function searchGoogleImages(recipe: Recipe) {
     }
 
     const scraped = [...found.values()].sort((a, b) => b.score - a.score).slice(0, 5);
-    return scraped.length ? scraped : [makeFallbackFoodImage(recipe)];
+    if (scraped.length) return scraped;
+    const wikimedia = await searchWikimediaImages(recipe);
+    return wikimedia.length ? wikimedia : [makeFallbackFoodImage(recipe)];
   } catch {
-    return [makeFallbackFoodImage(recipe)];
+    const wikimedia = await searchWikimediaImages(recipe);
+    return wikimedia.length ? wikimedia : [makeFallbackFoodImage(recipe)];
   }
 }
 
