@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 export const maxDuration = 60;
+const MAX_RECIPE_ATTEMPTS = 3;
 
 type RecipeRequest = {
   fridgeItems?: string[];
@@ -429,6 +430,17 @@ async function attachRecipeImages(result: RecipeResponse) {
   };
 }
 
+function hasThreeRecipes(result: RecipeResponse) {
+  return Array.isArray(result.recipes) && result.recipes.length >= 3;
+}
+
+function trimToThreeRecipes(result: RecipeResponse) {
+  return {
+    ...result,
+    recipes: (result.recipes || []).slice(0, 3),
+  };
+}
+
 function enforceFridgeOnly(result: RecipeResponse, mode: RecipeRequest["mode"]) {
   if (mode !== "fridge-only") return result;
 
@@ -442,6 +454,49 @@ function enforceFridgeOnly(result: RecipeResponse, mode: RecipeRequest["mode"]) 
         : "Lavet til kun at bruge de fundne eller manuelt skrevne varer plus basisvarer.",
     })),
   };
+}
+
+async function generateRecipes(requestBody: Record<string, unknown>, attempt: number) {
+  const response = await fetch(SKOLEGPT_API_URL as string, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(SKOLEGPT_API_KEY ? { Authorization: `Bearer ${SKOLEGPT_API_KEY}` } : {}),
+    },
+    signal: AbortSignal.timeout(42000),
+    body: JSON.stringify({
+      ...requestBody,
+      temperature: attempt === 1 ? 0.7 : 0.45,
+      max_tokens: attempt === 1 ? 3500 : 4200,
+      messages: [
+        ...(requestBody.messages as Array<{ role: string; content: unknown }>),
+        ...(attempt > 1
+          ? [
+              {
+                role: "user",
+                content:
+                  "Forrige svar havde ikke præcis 3 brugbare opskrifter. Prøv igen. Returner præcis 3 komplette opskrifter i recipes-arrayet og intet andet end JSON.",
+              },
+            ]
+          : []),
+      ],
+    }),
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    console.error("SkoleGPT recipe generation failed", {
+      attempt,
+      status: response.status,
+      statusText: response.statusText,
+      detail: detail.substring(0, 500),
+    });
+    return { summary: "", recipes: [] };
+  }
+
+  const data = await response.json();
+  const content = data?.choices?.[0]?.message?.content ?? data?.message?.content ?? data;
+  return normalizeRecipeResponse(parseJson(content));
 }
 
 export async function POST(request: NextRequest) {
@@ -481,37 +536,24 @@ export async function POST(request: NextRequest) {
       "recipes: array med title, why, time, servings, estimatedCost, calories, uses, shoppingList, ingredients og steps.",
   };
 
-  const response = await fetch(SKOLEGPT_API_URL, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      ...(SKOLEGPT_API_KEY ? { Authorization: `Bearer ${SKOLEGPT_API_KEY}` } : {}),
-    },
-    signal: AbortSignal.timeout(58000),
-    body: JSON.stringify({
-      model: SKOLEGPT_MODEL,
-      locale: body.locale || "da-DK",
-      temperature: 0.7,
-      max_tokens: 3500,
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: JSON.stringify(user) },
-      ],
-    }),
-  });
+  const requestBody = {
+    model: SKOLEGPT_MODEL,
+    locale: body.locale || "da-DK",
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: JSON.stringify(user) },
+    ],
+  };
 
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    console.error("SkoleGPT recipe generation failed", {
-      status: response.status,
-      statusText: response.statusText,
-      detail: detail.substring(0, 500),
-    });
-    return NextResponse.json({ error: "SkoleGPT kunne ikke lave opskrifter lige nu." }, { status: 502 });
+  let parsed: RecipeResponse = { summary: "", recipes: [] };
+  for (let attempt = 1; attempt <= MAX_RECIPE_ATTEMPTS; attempt += 1) {
+    parsed = enforceFridgeOnly(await generateRecipes(requestBody, attempt), body.mode || "shopping-ok");
+    if (hasThreeRecipes(parsed)) break;
   }
 
-  const data = await response.json();
-  const content = data?.choices?.[0]?.message?.content ?? data?.message?.content ?? data;
-  const parsed = enforceFridgeOnly(normalizeRecipeResponse(parseJson(content)), body.mode || "shopping-ok");
-  return NextResponse.json(await attachRecipeImages(parsed));
+  if (!hasThreeRecipes(parsed)) {
+    return NextResponse.json({ error: "SkoleGPT kunne ikke lave tre komplette opskrifter lige nu." }, { status: 502 });
+  }
+
+  return NextResponse.json(await attachRecipeImages(trimToThreeRecipes(parsed)));
 }
